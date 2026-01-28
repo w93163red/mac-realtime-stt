@@ -132,13 +132,13 @@ class RealtimeSTTProcessor:
 
                     else:
                         # 实时文本：直接翻译，只更新 Overlay，不存数据库
-                        print(f"[DEBUG] 开始翻译实时文本: {text[:50]}...")
+                        print(f"[DEBUG] 开始翻译实时文本: {text}...")
                         try:
                             # 获取翻译上下文
                             context = self.display.get_context_for_translation()
                             # 翻译实时文本
                             translation = self.translator.translate(text, context=context)
-                            print(f"[DEBUG] 实时翻译完成: {translation[:50]}...")
+                            print(f"[DEBUG] 实时翻译完成: {translation}...")
                             # 更新 Overlay 显示
                             self.display.update_realtime_translation(translation)
                         except Exception as e:

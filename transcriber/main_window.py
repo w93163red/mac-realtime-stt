@@ -4,6 +4,7 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 
+from .config import AppConfig
 from .data_manager import DataManager, SentenceRecord
 
 
@@ -18,9 +19,10 @@ class MainWindow:
     - 导出功能
     """
 
-    def __init__(self, data_manager: DataManager):
+    def __init__(self, data_manager: DataManager, config: AppConfig = None):
         self.root = tk.Tk()
         self.data_manager = data_manager
+        self.config = config  # 配置对象
         self.overlay_window = None  # 后续设置
 
         self._setup_window()
@@ -89,6 +91,12 @@ class MainWindow:
             toolbar,
             text="显示/隐藏悬浮窗",
             command=self._toggle_overlay
+        ).pack(side="right", padx=5)
+
+        ttk.Button(
+            toolbar,
+            text="⚙️ 设置",
+            command=self._open_settings
         ).pack(side="right", padx=5)
 
     def _setup_history_view(self):
@@ -281,6 +289,16 @@ class MainWindow:
         """切换悬浮窗显示/隐藏"""
         if self.overlay_window:
             self.overlay_window.toggle()
+
+    def _open_settings(self):
+        """打开设置窗口"""
+        if self.config is None:
+            messagebox.showwarning("警告", "配置对象未初始化")
+            return
+
+        from .settings_window import SettingsWindow
+        settings = SettingsWindow(self.root, self.config)
+        settings.show()
 
     def _on_close(self):
         """窗口关闭事件"""

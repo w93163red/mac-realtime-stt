@@ -1,5 +1,6 @@
 """翻译模块"""
 
+import re
 from openai import OpenAI
 
 from .config import TranslationConfig
@@ -14,6 +15,21 @@ class Translator:
             api_key=config.api_key,
             base_url=config.base_url,
         )
+
+    def _remove_thinking_tags(self, text: str) -> str:
+        """移除思考标签及其内容
+
+        Args:
+            text: 可能包含 <think>...</think> 标签的文本
+
+        Returns:
+            移除思考标签后的文本
+        """
+        # 移除 <think>...</think> 标签及其内容（支持多行）
+        cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+        # 移除多余的空白
+        cleaned = re.sub(r'\n\s*\n+', '\n', cleaned)
+        return cleaned.strip()
 
     def translate(
         self, text: str, context: list[tuple[str, str]] | None = None
@@ -55,12 +71,24 @@ class Translator:
             # 添加当前要翻译的文本
             messages.append({"role": "user", "content": text})
 
-            response = self.client.chat.completions.create(
-                model=self.config.model,
-                messages=messages,
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
-            )
-            return response.choices[0].message.content.strip()
+            # 准备 API 调用参数
+            api_params = {
+                "model": self.config.model,
+                "messages": messages,
+                "temperature": self.config.temperature,
+                "max_tokens": self.config.max_tokens,
+            }
+
+            # 如果启用 thinking，添加 reasoning_effort 参数（DeepSeek R1）
+            if self.config.thinking_level != "none":
+                api_params["reasoning_effort"] = self.config.thinking_level
+
+            response = self.client.chat.completions.create(**api_params)
+            result = response.choices[0].message.content.strip()
+
+            # 移除思考标签（如果有）
+            result = self._remove_thinking_tags(result)
+
+            return result
         except Exception as e:
             return f"[翻译错误: {e}]"

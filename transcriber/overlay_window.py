@@ -3,6 +3,7 @@
 import tkinter as tk
 from tkinter import ttk
 
+from .config import AppConfig
 from .data_manager import DataManager, SentenceRecord
 
 
@@ -18,9 +19,10 @@ class OverlayWindow:
     - 显示最近 3-4 句话（原文+翻译）
     """
 
-    def __init__(self, root: tk.Tk, data_manager: DataManager):
+    def __init__(self, root: tk.Tk, data_manager: DataManager, config: AppConfig = None):
         self.root = root
         self.data_manager = data_manager
+        self.config = config  # 配置对象
         self.window = tk.Toplevel(root)
 
         # 拖动和调整大小的状态
@@ -35,18 +37,27 @@ class OverlayWindow:
         self._setup_ui()
         self._setup_drag_resize()
 
+        # 注册配置变更回调
+        if self.config:
+            self.config.register_callback(self._on_config_change)
+
     def _setup_window(self):
         """窗口基础配置"""
+        # 使用配置中的几何信息和透明度
+        geometry = self.config.overlay.geometry if self.config else "800x300+100+100"
+        alpha = self.config.overlay.alpha if self.config else 0.8
+        topmost = self.config.overlay.topmost if self.config else True
+
         # 标题和大小
         self.window.title("字幕悬浮窗")
-        self.window.geometry("800x300+100+100")
+        self.window.geometry(geometry)
 
         # 半透明黑色背景
         self.window.configure(bg="#000000")
-        self.window.attributes('-alpha', 0.85)
+        self.window.attributes('-alpha', alpha)
 
         # 窗口置顶
-        self.window.attributes('-topmost', True)
+        self.window.attributes('-topmost', topmost)
 
         # macOS 特定配置（如果需要）
         try:
@@ -76,13 +87,16 @@ class OverlayWindow:
         )
         self.text_widget.pack(fill="both", expand=True)
 
-        # 配置标签样式
+        # 配置标签样式（使用配置中的字体大小）
+        font_size_original = self.config.overlay.font_size_original if self.config else 16
+        font_size_translation = self.config.overlay.font_size_translation if self.config else 14
+
         self.text_widget.tag_configure("original",
             foreground="#FFFFFF",
-            font=("Arial", 16, "bold"))
+            font=("Arial", font_size_original, "bold"))
         self.text_widget.tag_configure("translation",
             foreground="#00FF00",
-            font=("Arial", 14, "normal"))
+            font=("Arial", font_size_translation, "normal"))
         self.text_widget.tag_configure("loading",
             foreground="#888888",
             font=("Arial", 12, "italic"))
@@ -295,6 +309,36 @@ class OverlayWindow:
         else:
             self.hide()
 
+    def _on_config_change(self, config_name: str, old_value, new_value):
+        """配置变更回调 - 实时更新窗口设置
+
+        Args:
+            config_name: 配置名称（如 'overlay.alpha'）
+            old_value: 旧值
+            new_value: 新值
+        """
+        try:
+            if not self.window.winfo_exists():
+                return
+        except Exception:
+            return
+
+        if config_name == 'overlay.alpha':
+            self.window.attributes('-alpha', new_value)
+        elif config_name == 'overlay.font_size_original':
+            self.text_widget.tag_configure("original",
+                foreground="#FFFFFF",
+                font=("Arial", new_value, "bold"))
+        elif config_name == 'overlay.font_size_translation':
+            self.text_widget.tag_configure("translation",
+                foreground="#00FF00",
+                font=("Arial", new_value, "normal"))
+        elif config_name == 'overlay.topmost':
+            self.window.attributes('-topmost', new_value)
+
     def destroy(self):
         """销毁窗口"""
+        # 取消注册回调
+        if self.config:
+            self.config.unregister_callback(self._on_config_change)
         self.window.destroy()

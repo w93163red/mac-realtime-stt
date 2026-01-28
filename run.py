@@ -13,32 +13,16 @@ BlackHole + RealtimeSTT + DeepSeek
 """
 
 from transcriber.app import TranscriberApp
-from transcriber.config import (
-    AudioConfig,
-    DisplayConfig,
-    ProcessingConfig,
-    TranscriptionConfig,
-    TranslationConfig,
-)
+from transcriber.config import AppConfig
 
 
 def main():
     """主函数"""
-    # 创建配置
-    audio_config = AudioConfig()
-    transcription_config = TranscriptionConfig()
-    translation_config = TranslationConfig()
-    processing_config = ProcessingConfig()
-    display_config = DisplayConfig()
+    # 创建统一配置（自动加载 JSON 配置和环境变量）
+    config = AppConfig()
 
     # 创建并运行应用（GUI 模式）
-    app = TranscriberApp(
-        audio_config=audio_config,
-        transcription_config=transcription_config,
-        translation_config=translation_config,
-        processing_config=processing_config,
-        display_config=display_config,
-    )
+    app = TranscriberApp(app_config=config)
 
     app.run()
 

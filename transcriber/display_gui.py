@@ -281,12 +281,13 @@ class SubtitleDisplayCoordinator:
     保持与 SubtitleGUIDisplay 相同的接口，便于集成。
     """
 
-    def __init__(self, max_visible_items: int = 6, context_size: int = 10):
+    def __init__(self, max_visible_items: int = 6, context_size: int = 10, config=None):
         """初始化
 
         Args:
             max_visible_items: 最大显示句子数（兼容性参数，实际由 DataManager 控制）
-            context_size: 上下文大小（兼容性参数，段落模式不使用）
+            context_size: 上下文大小（如果 config 未提供则使用此值）
+            config: AppConfig 配置对象（可选）
         """
         import time
         from .data_manager import DataManager
@@ -296,14 +297,18 @@ class SubtitleDisplayCoordinator:
         # 记录当前会话开始时间（用于 Overlay 过滤历史数据）
         self._session_start_time = time.time()
 
+        # 保存配置对象
+        self.config = config
+
         # 数据层
         self.data_manager = DataManager()
 
-        # 显示层
-        self.main_window = MainWindow(self.data_manager)
+        # 显示层（传递 config）
+        self.main_window = MainWindow(self.data_manager, config=config)
         self.overlay_window = OverlayWindow(
             self.main_window.root,
-            self.data_manager
+            self.data_manager,
+            config=config
         )
 
         # 设置主窗口的 overlay 引用
@@ -320,8 +325,11 @@ class SubtitleDisplayCoordinator:
         self._current_realtime_text = ""  # 当前正在转录的实时文本
         self._current_realtime_translation = ""  # 当前实时文本的翻译
 
-        # 兼容性参数
-        self.context_size = context_size
+        # 兼容性参数：从 config 读取 context_size，如果没有 config 则使用参数值
+        if config:
+            self.context_size = config.display.translation_context_size
+        else:
+            self.context_size = context_size
 
         # 延迟初始化显示（等待窗口完全创建）
         self.main_window.root.after(100, self._initial_refresh)
@@ -411,9 +419,12 @@ class SubtitleDisplayCoordinator:
         self._current_realtime_text = text
 
         def do_update():
-            # 获取数据库中最近的 3 句已完成的句子
+            # 获取配置的最大句子数，减1为实时文本留出空间
+            max_completed = self.config.overlay.max_sentences - 1 if self.config else 3
+
+            # 获取数据库中最近的 N 句已完成的句子
             recent_completed = self.data_manager.get_recent_sentences_after(
-                self._session_start_time, count=3
+                self._session_start_time, count=max_completed
             )
 
             # 显示：数据库的 n-1 句 + 当前实时文本 + 实时翻译
@@ -439,9 +450,12 @@ class SubtitleDisplayCoordinator:
         self._current_realtime_translation = translation
 
         def do_update():
-            # 获取数据库中最近的 3 句已完成的句子
+            # 获取配置的最大句子数，减1为实时文本留出空间
+            max_completed = self.config.overlay.max_sentences - 1 if self.config else 3
+
+            # 获取数据库中最近的 N 句已完成的句子
             recent_completed = self.data_manager.get_recent_sentences_after(
-                self._session_start_time, count=3
+                self._session_start_time, count=max_completed
             )
 
             # 更新 Overlay：显示实时翻译
@@ -594,11 +608,14 @@ class SubtitleDisplayCoordinator:
     def _refresh_both_windows(self):
         """刷新两个窗口的显示"""
         def do_refresh():
-            # Overlay 窗口：显示最近 3 句已完成的句子 + 当前实时文本 + 实时翻译
+            # Overlay 窗口：显示最近 N 句已完成的句子 + 当前实时文本 + 实时翻译
             if self._has_new_content or self._current_realtime_text:
-                # 获取最近 3 句已完成的句子
+                # 获取配置的最大句子数，减1为实时文本留出空间
+                max_completed = self.config.overlay.max_sentences - 1 if self.config else 3
+
+                # 获取最近 N 句已完成的句子
                 recent_sentences = self.data_manager.get_recent_sentences_after(
-                    self._session_start_time, count=3
+                    self._session_start_time, count=max_completed
                 )
                 # 显示：n-1 句 + 实时文本 + 实时翻译
                 self.overlay_window.update_with_realtime(

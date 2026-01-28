@@ -3,6 +3,7 @@
 import threading
 
 from .config import (
+    AppConfig,
     AudioConfig,
     DisplayConfig,
     ProcessingConfig,
@@ -19,26 +20,39 @@ class TranscriberApp:
 
     def __init__(
         self,
-        audio_config: AudioConfig,
-        transcription_config: TranscriptionConfig,
-        translation_config: TranslationConfig,
-        processing_config: ProcessingConfig,
-        display_config: DisplayConfig,
+        audio_config: AudioConfig = None,
+        transcription_config: TranscriptionConfig = None,
+        translation_config: TranslationConfig = None,
+        processing_config: ProcessingConfig = None,
+        display_config: DisplayConfig = None,
+        app_config: AppConfig = None,
     ):
-        self.audio_config = audio_config
-        self.transcription_config = transcription_config
-        self.translation_config = translation_config
-        self.processing_config = processing_config
-        self.display_config = display_config
+        # 如果提供了 AppConfig，优先使用它
+        if app_config:
+            self.app_config = app_config
+            self.audio_config = app_config.audio
+            self.transcription_config = app_config.transcription
+            self.translation_config = app_config.translation
+            self.processing_config = app_config.processing
+            self.display_config = app_config.display
+        else:
+            # 兼容旧的初始化方式
+            self.app_config = None
+            self.audio_config = audio_config
+            self.transcription_config = transcription_config
+            self.translation_config = translation_config
+            self.processing_config = processing_config
+            self.display_config = display_config
 
-        # 初始化双窗口显示协调器
+        # 初始化双窗口显示协调器（传递 config）
         self.display = SubtitleDisplayCoordinator(
-            max_visible_items=display_config.max_visible_items,
-            context_size=display_config.translation_context_size,
+            max_visible_items=self.display_config.max_visible_items,
+            context_size=self.display_config.translation_context_size,
+            config=self.app_config,
         )
 
         # 初始化其他组件
-        self.translator = Translator(translation_config)
+        self.translator = Translator(self.translation_config)
         self.processor = None  # 延迟初始化
 
         self._process_thread = None

@@ -1,0 +1,72 @@
+name: Build macOS App
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: |
+          uv sync
+          uv pip install pyinstaller
+
+      - name: Build macOS app with PyInstaller
+        run: |
+          uv run pyinstaller \
+            --name "MacTranscriber" \
+            --windowed \
+            --onefile \
+            --add-data "transcriber:transcriber" \
+            --hidden-import "tkinter" \
+            --hidden-import "sounddevice" \
+            --hidden-import "faster_whisper" \
+            --hidden-import "openai" \
+            --collect-all "faster_whisper" \
+            run.py
+
+      - name: Create DMG
+        run: |
+          # Create a temporary directory for DMG contents
+          mkdir -p dmg_contents
+          cp -r dist/MacTranscriber.app dmg_contents/ 2>/dev/null || cp dist/MacTranscriber dmg_contents/
+
+          # Create DMG
+          hdiutil create -volname "MacTranscriber" \
+            -srcfolder dmg_contents \
+            -ov -format UDZO \
+            "MacTranscriber-${{ github.ref_name }}.dmg"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: MacTranscriber-${{ github.ref_name }}
+          path: |
+            dist/MacTranscriber*
+            MacTranscriber-*.dmg
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/MacTranscriber*
+            MacTranscriber-*.dmg
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
