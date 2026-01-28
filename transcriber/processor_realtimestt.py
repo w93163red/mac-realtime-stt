@@ -1,7 +1,6 @@
 """音频处理器模块 - 基于 RealtimeSTT"""
 
 import queue
-import re
 import threading
 from typing import Optional
 
@@ -22,20 +21,18 @@ class RealtimeSTTProcessor:
         language: str = "en",
         device: str = "cpu",
         compute_type: str = "int8",
-        translation_delay: float = 2.0,
         audio_device_name: str = "BlackHole 2ch",
     ):
         self.translator = translator
         self.display = display
-        self.translation_delay = translation_delay
 
         self._last_text = ""
         self._last_completed_text = ""
         self._translation_queue: queue.Queue = queue.Queue()
         self._running = False
-        self._pending_translation_timer: Optional[threading.Timer] = None
-        self._pending_translation_text: str = ""
-        self._timer_lock = threading.Lock()
+
+        # 跟踪已处理的文本（用于去重）
+        self._processed_sentences: set[str] = set()
 
         # 查找音频设备索引
         device_index = self._find_audio_device(audio_device_name)
@@ -57,7 +54,7 @@ class RealtimeSTTProcessor:
             min_gap_between_recordings=0.0,  # 录音之间的最小间隔
             enable_realtime_transcription=True,  # 启用实时转录
             realtime_processing_pause=0.1,  # 实时处理间隔
-            on_realtime_transcription_update=self._on_realtime_update,
+            on_realtime_transcription_stabilized=self._on_stabilized_update,  # 悬浮窗显示（稳定文本）
         )
 
     def _find_audio_device(self, device_name: str) -> Optional[int]:
@@ -69,110 +66,93 @@ class RealtimeSTTProcessor:
         return None
 
     def _start_translation_worker(self):
-        """启动异步翻译线程"""
+        """启动异步翻译线程 - 逐句翻译模式"""
 
         def worker():
             while self._running:
                 try:
-                    # 从队列获取翻译任务（段落翻译）
+                    # 从队列获取翻译任务
                     _ = self._translation_queue.get(timeout=1)
 
-                    # 获取当前所有句子
-                    sentences = self.display.gui.get_sentences()
-                    if not sentences:
+                    # 检查是否有新句子需要翻译
+                    new_sentences = self.display.get_new_sentences_for_translation()
+                    if not new_sentences:
                         continue
 
-                    # 合并成段落
-                    paragraph = " ".join(sentences)
+                    # 逐句翻译新句子
+                    translations = []
+                    for sentence_id, original_text in new_sentences:
+                        try:
+                            # 获取翻译上下文（最近N句已翻译的句子）
+                            context = self.display.get_context_for_translation()
+                            # 翻译单句
+                            translation = self.translator.translate(original_text, context=context)
+                            translations.append((sentence_id, translation))
+                        except Exception as e:
+                            print(f"翻译失败: {original_text[:100]}... 错误: {e}")
 
-                    # 翻译整个段落（不需要上下文，因为段落本身就是上下文）
-                    translated = self.translator.translate(paragraph, context=[])
+                    # 批量更新翻译
+                    if translations:
+                        self.display.batch_update_translations(translations)
 
-                    # 更新段落翻译
-                    self.display.update_translated_with_original("", translated)
                 except queue.Empty:
                     continue
                 except Exception as e:
-                    self.display.print(f"[red]翻译错误: {e}[/red]")
+                    import traceback
+                    error_details = traceback.format_exc()
+                    self.display.print(f"翻译错误: {e}")
+                    print(f"翻译错误详情:\n{error_details}")
 
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
         return thread
 
-    def _cancel_pending_translation(self):
-        """取消待处理的翻译定时器"""
-        with self._timer_lock:
-            if self._pending_translation_timer:
-                self._pending_translation_timer.cancel()
-                self._pending_translation_timer = None
-                self._pending_translation_text = ""
+    def _on_stabilized_update(self, text: str):
+        """稳定转录回调 - 仅用于悬浮窗（高质量、稳定的文本）"""
+        print(f"\n[DEBUG] ========== _on_stabilized_update 被调用 ==========")
+        print(f"[DEBUG] 完整文本: {text}")
+        print(f"[DEBUG] 长度: {len(text) if text else 0} 字符")
+        print(f"[DEBUG] ===============================================\n")
 
-    def _schedule_delayed_translation(self, text: str):
-        """延迟翻译（用于未完成的句子）"""
-
-        def do_translation():
-            with self._timer_lock:
-                if self._pending_translation_text == text:
-                    self._translation_queue.put((text, False))  # (original_text, is_final)
-                    self._pending_translation_text = ""
-                    self._pending_translation_timer = None
-
-        with self._timer_lock:
-            # 取消之前的定时器
-            if self._pending_translation_timer:
-                self._pending_translation_timer.cancel()
-
-            # 创建新的定时器
-            self._pending_translation_text = text
-            self._pending_translation_timer = threading.Timer(
-                self.translation_delay, do_translation
-            )
-            self._pending_translation_timer.daemon = True
-            self._pending_translation_timer.start()
-
-    def _on_realtime_update(self, text: str):
-        """实时转录更新回调（句子未完成）"""
         if not text or text == self._last_text:
             return
 
         self._last_text = text
-        # 未完成的句子，更新当前显示
-        self.display.update_original(text, is_final=False)
-        # 延迟翻译
-        self._schedule_delayed_translation(text)
-
-    def _split_sentences(self, text: str) -> list[str]:
-        """将文本分割成句子列表
-
-        使用简单的句号、问号、感叹号分割，同时保留缩写词（如 Mr. Dr.）
-        """
-        # 简单分割：按 .!? 分割，但要考虑常见缩写
-        # 使用正则表达式分割句子
-        sentences = re.split(r'(?<=[.!?])\s+', text)
-        # 过滤掉空句子
-        return [s.strip() for s in sentences if s.strip()]
+        # 直接更新 Overlay 窗口，不影响数据库和主窗口
+        self.display.update_overlay_only(text)
 
     def _handle_completed_sentence(self, text: str):
-        """处理完成的句子（可能包含多个句子）"""
+        """处理完整句子（从 recorder.text() 返回）"""
         if not text or not text.strip():
             return
 
         # 检查是否与最近完成的句子相同，避免重复
         if text == self._last_completed_text:
+            print(f"[DEBUG] 跳过重复文本（与上次相同）")
             return
 
-        self._cancel_pending_translation()
         self._last_completed_text = text
         self._last_text = ""
 
-        # 将文本分割成多个句子
-        sentences = self._split_sentences(text)
+        # 去重检查
+        if text not in self._processed_sentences:
+            print(f"[DEBUG] 新文本，添加到主窗口显示")
+            self._processed_sentences.add(text)
 
-        # 批量添加句子到显示中
-        self.display.add_completed_sentences(sentences)
+            # 限制去重集合大小，只保留最近 1000 条（防止内存无限增长）
+            if len(self._processed_sentences) > 1000:
+                # 保留最新加入的 800 条
+                texts_list = list(self._processed_sentences)
+                self._processed_sentences = set(texts_list[-800:])
 
-        # 立即翻译整个段落
-        self._translation_queue.put((text, True))  # (original_text, is_final)
+            print(f"[DEBUG] 已处理总数: {len(self._processed_sentences)}")
+
+            # 添加到显示（作为一条完整记录）
+            self.display.add_completed_sentences([text])
+            # 立即翻译
+            self._translation_queue.put((text, True))
+        else:
+            print(f"[DEBUG] 重复文本(已跳过): {text}")
 
     def run(self):
         """运行音频处理循环"""
@@ -180,13 +160,18 @@ class RealtimeSTTProcessor:
         self._start_translation_worker()
 
         try:
-            # RealtimeSTT 的 text() 方法会阻塞，直到检测到完整句子
-            # 实时更新通过 on_realtime_transcription_update 回调
+            # 使用 recorder.text() 获取完整句子（在 VAD 检测到句子结束后返回）
             while self._running:
-                # text() 返回完整的句子
-                full_text = self.recorder.text()
-                if full_text:
-                    self._handle_completed_sentence(full_text)
+                # text() 会阻塞直到检测到句子结束
+                text_from_method = self.recorder.text()
+                if text_from_method:
+                    print(f"\n[DEBUG] ========== recorder.text() 返回完整句子 ==========")
+                    print(f"[DEBUG] 完整文本: {text_from_method}")
+                    print(f"[DEBUG] 长度: {len(text_from_method)} 字符")
+                    print(f"[DEBUG] ===============================================\n")
+
+                    # 处理完整句子：去重并添加到主窗口
+                    self._handle_completed_sentence(text_from_method)
         except KeyboardInterrupt:
             pass
         finally:
@@ -195,7 +180,6 @@ class RealtimeSTTProcessor:
     def stop(self):
         """停止处理"""
         self._running = False
-        self._cancel_pending_translation()
         try:
             if hasattr(self.recorder, "abort"):
                 self.recorder.abort()

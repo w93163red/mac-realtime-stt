@@ -9,7 +9,7 @@ from .config import (
     TranscriptionConfig,
     TranslationConfig,
 )
-from .display_gui import SubtitleGUIDisplay
+from .display_gui import SubtitleDisplayCoordinator
 from .processor_realtimestt import RealtimeSTTProcessor
 from .translation import Translator
 
@@ -31,8 +31,8 @@ class TranscriberApp:
         self.processing_config = processing_config
         self.display_config = display_config
 
-        # 初始化 GUI 显示组件
-        self.display = SubtitleGUIDisplay(
+        # 初始化双窗口显示协调器
+        self.display = SubtitleDisplayCoordinator(
             max_visible_items=display_config.max_visible_items,
             context_size=display_config.translation_context_size,
         )
@@ -61,7 +61,6 @@ class TranscriberApp:
             language=self.transcription_config.source_lang,
             device=self.transcription_config.device,
             compute_type=self.transcription_config.compute_type,
-            translation_delay=self.processing_config.translation_delay,
             audio_device_name=self.audio_config.device_name,
         )
 

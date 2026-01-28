@@ -272,3 +272,327 @@ class SubtitleGUIDisplay:
     def quit(self):
         """退出"""
         self.gui.quit()
+
+
+class SubtitleDisplayCoordinator:
+    """双窗口显示协调器
+
+    整合 Overlay 窗口和主窗口，统一管理数据和显示。
+    保持与 SubtitleGUIDisplay 相同的接口，便于集成。
+    """
+
+    def __init__(self, max_visible_items: int = 6, context_size: int = 10):
+        """初始化
+
+        Args:
+            max_visible_items: 最大显示句子数（兼容性参数，实际由 DataManager 控制）
+            context_size: 上下文大小（兼容性参数，段落模式不使用）
+        """
+        import time
+        from .data_manager import DataManager
+        from .main_window import MainWindow
+        from .overlay_window import OverlayWindow
+
+        # 记录当前会话开始时间（用于 Overlay 过滤历史数据）
+        self._session_start_time = time.time()
+
+        # 数据层
+        self.data_manager = DataManager()
+
+        # 显示层
+        self.main_window = MainWindow(self.data_manager)
+        self.overlay_window = OverlayWindow(
+            self.main_window.root,
+            self.data_manager
+        )
+
+        # 设置主窗口的 overlay 引用
+        self.main_window.set_overlay_window(self.overlay_window)
+
+        # 兼容性：提供 gui 属性，指向主窗口
+        self.gui = self.main_window
+
+        # 当前句子的状态
+        self._current_sentence_id = None
+        self._current_original = ""
+        self._new_sentence_ids = []  # 新添加的句子ID列表（用于翻译）
+        self._has_new_content = False  # 标记是否有新内容（用于 Overlay 空白启动）
+
+        # 兼容性参数
+        self.context_size = context_size
+
+        # 延迟初始化显示（等待窗口完全创建）
+        self.main_window.root.after(100, self._initial_refresh)
+
+    def get_context_for_translation(self, context_size: int | None = None) -> list[tuple[str, str]]:
+        """获取翻译上下文（逐句翻译模式：返回最近N句已翻译的句子）
+
+        Args:
+            context_size: 上下文句子数量，如果为None则使用默认值
+
+        Returns:
+            list[tuple[str, str]]: [(original, translation), ...] 最近的已翻译句子
+        """
+        if context_size is None:
+            context_size = self.context_size
+
+        all_sentences = self.data_manager.get_all_sentences()
+
+        # 获取最近N句已翻译的句子
+        context = []
+        for sentence in reversed(all_sentences):
+            if sentence.translation and sentence.translation.strip():
+                context.append((sentence.original, sentence.translation))
+                if len(context) >= context_size:
+                    break
+
+        # 反转回正序
+        return list(reversed(context))
+
+    def get_sentences(self) -> list[str]:
+        """获取当前所有句子的原文列表（兼容旧代码）
+
+        Returns:
+            list[str]: 所有句子的原文
+        """
+        all_sentences = self.data_manager.get_all_sentences()
+        return [s.original for s in all_sentences]
+
+    def get_new_sentences_for_translation(self) -> list[tuple[str, str]]:
+        """获取需要翻译的新句子（ID + 原文）
+
+        Returns:
+            list[tuple[str, str]]: [(sentence_id, original_text), ...]
+        """
+        if not self._new_sentence_ids:
+            return []
+
+        result = []
+        all_sentences = self.data_manager.get_all_sentences()
+
+        # 找到对应的句子
+        for sentence in all_sentences:
+            if sentence.id in self._new_sentence_ids:
+                result.append((sentence.id, sentence.original))
+
+        # 清空新句子列表
+        self._new_sentence_ids = []
+
+        return result
+
+    def get_current_incomplete_sentence(self) -> tuple[str, str] | None:
+        """获取当前未完成的句子（用于延迟翻译）
+
+        Returns:
+            tuple[str, str] | None: (sentence_id, original_text) 或 None
+        """
+        if not self._current_sentence_id:
+            return None
+
+        all_sentences = self.data_manager.get_all_sentences()
+        for sentence in all_sentences:
+            if sentence.id == self._current_sentence_id:
+                return (sentence.id, sentence.original)
+
+        return None
+
+    def update_overlay_only(self, text: str):
+        """仅更新 Overlay 窗口（用于实时显示，不影响数据库）
+
+        Args:
+            text: 实时文本（未完成的句子）
+        """
+        if not text:
+            return
+
+        def do_update():
+            # 直接更新 Overlay 窗口的文本显示
+            self.overlay_window.update_realtime_text(text)
+
+        # 调度到主线程
+        self.main_window.root.after(0, do_update)
+
+    def update_original(self, text: str, is_final: bool = False):
+        """更新原文
+
+        Args:
+            text: 原文文本
+            is_final: 是否是完整句子
+        """
+        self._current_original = text
+        self._has_new_content = True  # 标记有新内容
+
+        if is_final:
+            # 完整句子：添加到数据库
+            if text.strip():
+                record = self.data_manager.add_sentence(
+                    original=text,
+                    translation="",
+                    is_completed=True
+                )
+                self._current_sentence_id = record.id
+                # 标记为新句子，需要翻译
+                self._new_sentence_ids = [record.id]
+
+                # 刷新两个窗口
+                self._refresh_both_windows()
+        else:
+            # 未完成句子：更新或创建临时记录
+            if not self._current_sentence_id:
+                # 创建新的未完成句子
+                record = self.data_manager.add_sentence(
+                    original=text,
+                    translation="",
+                    is_completed=False
+                )
+                self._current_sentence_id = record.id
+            else:
+                # 更新现有未完成句子
+                self.data_manager.update_sentence(
+                    self._current_sentence_id,
+                    original=text
+                )
+
+            # 刷新两个窗口
+            self._refresh_both_windows()
+
+    def add_completed_sentences(self, sentences: list[str]):
+        """批量添加完整句子
+
+        Args:
+            sentences: 已完成的句子列表
+        """
+        self._has_new_content = True  # 标记有新内容
+
+        # 如果有当前未完成的句子，先标记为完成
+        if self._current_sentence_id:
+            self.data_manager.update_sentence(
+                self._current_sentence_id,
+                is_completed=True
+            )
+            self._current_sentence_id = None
+
+        # 批量添加新句子，并返回新句子的ID列表
+        new_sentence_ids = []
+        for sentence in sentences:
+            if sentence.strip():
+                record = self.data_manager.add_sentence(
+                    original=sentence,
+                    translation="",
+                    is_completed=True
+                )
+                new_sentence_ids.append(record.id)
+
+        # 保存新句子ID，供翻译使用
+        self._new_sentence_ids = new_sentence_ids
+
+        # 刷新两个窗口
+        self._refresh_both_windows()
+
+    def update_translated(self, text: str):
+        """更新翻译（使用当前原文）
+
+        Args:
+            text: 翻译文本
+        """
+        self.update_translated_with_original(self._current_original, text)
+
+    def update_translated_with_original(self, original_text: str, translation: str):
+        """更新翻译（段落模式：更新最新句子的翻译）
+
+        Args:
+            original_text: 原文（兼容性参数）
+            translation: 翻译文本
+        """
+        # 获取最新的句子
+        all_sentences = self.data_manager.get_all_sentences()
+
+        if all_sentences:
+            # 更新最新句子的翻译
+            latest = all_sentences[-1]
+            self.data_manager.update_sentence(
+                latest.id,
+                translation=translation
+            )
+
+            # 刷新两个窗口
+            self._refresh_both_windows()
+
+    def batch_update_translations(self, sentence_translations: list[tuple[str, str]]):
+        """批量更新多个句子的翻译
+
+        Args:
+            sentence_translations: [(sentence_id, translation), ...]
+        """
+        for sentence_id, translation in sentence_translations:
+            self.data_manager.update_sentence(
+                sentence_id,
+                translation=translation
+            )
+
+        # 批量更新后刷新窗口
+        self._refresh_both_windows()
+
+    def _initial_refresh(self):
+        """初始化时刷新显示（延迟调用，确保窗口已创建）"""
+        # Overlay 窗口：启动时显示空白
+        self.overlay_window.update_display([])
+
+        # 主窗口：显示历史记录
+        all_sentences = self.data_manager.get_all_sentences()
+        self.main_window.update_history(all_sentences)
+
+    def _refresh_both_windows(self):
+        """刷新两个窗口的显示"""
+        def do_refresh():
+            # Overlay 窗口：只显示当前会话的新内容（不包括历史）
+            if self._has_new_content:
+                # 只获取当前会话开始后的句子
+                recent_sentences = self.data_manager.get_recent_sentences_after(
+                    self._session_start_time, count=4
+                )
+                self.overlay_window.update_display(recent_sentences)
+            else:
+                # 启动时显示空白
+                self.overlay_window.update_display([])
+
+            # 主窗口：始终显示全部（包括历史）
+            all_sentences = self.data_manager.get_all_sentences()
+            self.main_window.update_history(all_sentences)
+
+        # 调度到主线程
+        self.main_window.root.after(0, do_refresh)
+
+    def print(self, message: str, style: str = ""):
+        """打印消息到状态栏
+
+        Args:
+            message: 消息文本
+            style: 样式（兼容性参数）
+        """
+        # 清理 rich 样式标记
+        clean_message = message.replace("[bold]", "").replace("[/bold]", "")
+        clean_message = clean_message.replace("[green]", "").replace("[/green]", "")
+        clean_message = clean_message.replace("[yellow]", "").replace("[/yellow]", "")
+        clean_message = clean_message.replace("[red]", "").replace("[/red]", "")
+
+        # 根据消息内容确定颜色
+        color = "#4CAF50"
+        if "错误" in message or "error" in message.lower():
+            color = "#F44336"
+        elif "警告" in message or "warning" in message.lower():
+            color = "#FF9800"
+
+        # 更新主窗口状态栏
+        self.main_window.root.after(
+            0,
+            lambda: self.main_window.update_status(clean_message, color)
+        )
+
+    def run(self):
+        """运行 GUI 主循环"""
+        self.main_window.run()
+
+    def quit(self):
+        """退出"""
+        self.main_window.quit()

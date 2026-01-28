@@ -23,7 +23,7 @@ class TranscriptionConfig:
 @dataclass
 class ProcessingConfig:
     """处理配置"""
-    translation_delay: float = 0.5  # 未完成句子的翻译延迟（秒）
+    translation_delay: float = 0.2  # 未完成句子的翻译延迟（秒）
 
 
 @dataclass
@@ -45,3 +45,17 @@ class DisplayConfig:
     update_interval_ms: int = 250
     max_visible_items: int = 6  # GUI显示的最大句子数量
     translation_context_size: int = 10  # 传递给LLM的上下文句子数量
+
+
+@dataclass
+class StorageConfig:
+    """存储配置"""
+    storage_path: str = "~/.mac-transcriber"  # 数据存储路径
+
+
+@dataclass
+class OverlayConfig:
+    """Overlay 窗口配置"""
+    default_alpha: float = 0.6  # 默认透明度 (0.0-1.0)
+    default_geometry: str = "800x300+100+100"  # 默认窗口大小和位置
+    max_sentences: int = 4  # 最多显示句子数
