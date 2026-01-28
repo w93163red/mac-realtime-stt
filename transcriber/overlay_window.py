@@ -67,6 +67,15 @@ class OverlayWindow:
 
     def _setup_ui(self):
         """设置 UI 布局"""
+        # 控制栏（顶部，初始隐藏）
+        self.control_bar = tk.Frame(self.window, bg="#1a1a1a", height=80)
+        self.control_bar.pack(fill="x", side="top")
+        self.control_bar.pack_propagate(False)  # 固定高度
+        self.control_bar_visible = False
+        self.control_bar.pack_forget()  # 初始隐藏
+
+        self._setup_control_bar()
+
         # 创建主框架
         main_frame = tk.Frame(self.window, bg="#000000")
         main_frame.pack(fill="both", expand=True)
@@ -118,16 +127,153 @@ class OverlayWindow:
         resize_handle.bind("<ButtonPress-1>", self._start_resize)
         resize_handle.bind("<B1-Motion>", self._on_resize)
 
+    def _setup_control_bar(self):
+        """设置控制栏（透明度和字体大小调节）"""
+        if not self.config:
+            return
+
+        # 内容区域
+        content_frame = tk.Frame(self.control_bar, bg="#1a1a1a")
+        content_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # 左侧：透明度控制
+        alpha_frame = tk.Frame(content_frame, bg="#1a1a1a")
+        alpha_frame.pack(side="left", fill="x", expand=True)
+
+        tk.Label(alpha_frame, text="透明度", bg="#1a1a1a", fg="#FFFFFF",
+                 font=("Arial", 10)).pack(side="left", padx=(0, 5))
+
+        self.alpha_var = tk.DoubleVar(value=self.config.overlay.alpha)
+        self.alpha_label = tk.Label(alpha_frame, text=f"{self.config.overlay.alpha:.2f}",
+                                     bg="#1a1a1a", fg="#00FF00", font=("Arial", 10, "bold"),
+                                     width=4)
+        self.alpha_label.pack(side="right", padx=(5, 0))
+
+        alpha_scale = tk.Scale(
+            alpha_frame,
+            from_=0.3,
+            to=1.0,
+            resolution=0.05,
+            orient="horizontal",
+            variable=self.alpha_var,
+            command=self._on_alpha_slider_change,
+            bg="#2a2a2a",
+            fg="#FFFFFF",
+            highlightthickness=0,
+            troughcolor="#000000",
+            activebackground="#00FF00",
+            showvalue=False,
+            length=150
+        )
+        alpha_scale.pack(side="left", fill="x", expand=True, padx=5)
+
+        # 中间：原文字体大小
+        font_orig_frame = tk.Frame(content_frame, bg="#1a1a1a")
+        font_orig_frame.pack(side="left", fill="x", expand=True, padx=10)
+
+        tk.Label(font_orig_frame, text="原文", bg="#1a1a1a", fg="#FFFFFF",
+                 font=("Arial", 10)).pack(side="left", padx=(0, 5))
+
+        self.font_orig_var = tk.IntVar(value=self.config.overlay.font_size_original)
+        self.font_orig_label = tk.Label(font_orig_frame,
+                                         text=f"{self.config.overlay.font_size_original}",
+                                         bg="#1a1a1a", fg="#00FF00", font=("Arial", 10, "bold"),
+                                         width=3)
+        self.font_orig_label.pack(side="right", padx=(5, 0))
+
+        font_orig_scale = tk.Scale(
+            font_orig_frame,
+            from_=10,
+            to=36,
+            resolution=2,
+            orient="horizontal",
+            variable=self.font_orig_var,
+            command=self._on_font_orig_slider_change,
+            bg="#2a2a2a",
+            fg="#FFFFFF",
+            highlightthickness=0,
+            troughcolor="#000000",
+            activebackground="#00FF00",
+            showvalue=False,
+            length=100
+        )
+        font_orig_scale.pack(side="left", fill="x", expand=True, padx=5)
+
+        # 右侧：翻译字体大小
+        font_trans_frame = tk.Frame(content_frame, bg="#1a1a1a")
+        font_trans_frame.pack(side="left", fill="x", expand=True)
+
+        tk.Label(font_trans_frame, text="翻译", bg="#1a1a1a", fg="#FFFFFF",
+                 font=("Arial", 10)).pack(side="left", padx=(0, 5))
+
+        self.font_trans_var = tk.IntVar(value=self.config.overlay.font_size_translation)
+        self.font_trans_label = tk.Label(font_trans_frame,
+                                          text=f"{self.config.overlay.font_size_translation}",
+                                          bg="#1a1a1a", fg="#00FF00", font=("Arial", 10, "bold"),
+                                          width=3)
+        self.font_trans_label.pack(side="right", padx=(5, 0))
+
+        font_trans_scale = tk.Scale(
+            font_trans_frame,
+            from_=10,
+            to=36,
+            resolution=2,
+            orient="horizontal",
+            variable=self.font_trans_var,
+            command=self._on_font_trans_slider_change,
+            bg="#2a2a2a",
+            fg="#FFFFFF",
+            highlightthickness=0,
+            troughcolor="#000000",
+            activebackground="#00FF00",
+            showvalue=False,
+            length=100
+        )
+        font_trans_scale.pack(side="left", fill="x", expand=True, padx=5)
+
+    def _on_alpha_slider_change(self, value):
+        """透明度滑块变化"""
+        alpha = float(value)
+        self.alpha_label.config(text=f"{alpha:.2f}")
+        if self.config:
+            self.config.update_overlay_alpha(alpha)
+
+    def _on_font_orig_slider_change(self, value):
+        """原文字体大小滑块变化"""
+        size = int(float(value))
+        self.font_orig_label.config(text=f"{size}")
+        if self.config:
+            self.config.update_overlay_font_size(original_size=size)
+
+    def _on_font_trans_slider_change(self, value):
+        """翻译字体大小滑块变化"""
+        size = int(float(value))
+        self.font_trans_label.config(text=f"{size}")
+        if self.config:
+            self.config.update_overlay_font_size(translation_size=size)
+
+    def _show_control_bar(self):
+        """显示控制栏"""
+        if not self.control_bar_visible:
+            self.control_bar.pack(fill="x", side="top", before=self.text_widget.master)
+            self.control_bar_visible = True
+
+    def _hide_control_bar(self):
+        """隐藏控制栏"""
+        if self.control_bar_visible:
+            self.control_bar.pack_forget()
+            self.control_bar_visible = False
+
     def _setup_drag_resize(self):
         """设置拖动功能"""
         # 拖动窗口（绑定到整个窗口）
         self.window.bind("<ButtonPress-1>", self._start_drag)
         self.window.bind("<B1-Motion>", self._on_drag)
 
-        # 鼠标进入时增加不透明度
-        self.window.bind("<Enter>", lambda e: self.window.attributes('-alpha', 0.95))
-        # 鼠标离开时恢复透明度
-        self.window.bind("<Leave>", lambda e: self.window.attributes('-alpha', 0.85))
+        # 鼠标进入时显示控制栏
+        self.window.bind("<Enter>", lambda e: self._show_control_bar())
+        # 鼠标离开时隐藏控制栏
+        self.window.bind("<Leave>", lambda e: self._hide_control_bar())
 
     def _start_drag(self, event):
         """开始拖动"""
