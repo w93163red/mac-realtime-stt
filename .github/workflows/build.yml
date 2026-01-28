@@ -10,6 +10,15 @@ jobs:
     runs-on: macos-latest
 
     steps:
+      - name: Free disk space
+        run: |
+          # Remove unnecessary large directories to free up space
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/.ghcup || true
+          df -h
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -40,32 +49,28 @@ jobs:
             --collect-all "faster_whisper" \
             run.py
 
-      - name: Create DMG
+      - name: Clean up build artifacts
         run: |
-          # Create a temporary directory for DMG contents
-          mkdir -p dmg_contents
-          cp -r dist/MacTranscriber.app dmg_contents/ 2>/dev/null || cp dist/MacTranscriber dmg_contents/
+          # Remove build directory to free space for DMG
+          rm -rf build/
+          df -h
 
-          # Create DMG
-          hdiutil create -volname "MacTranscriber" \
-            -srcfolder dmg_contents \
-            -ov -format UDZO \
-            "MacTranscriber-${{ github.ref_name }}.dmg"
+      - name: Create ZIP archive
+        run: |
+          cd dist
+          zip -r "../MacTranscriber-${{ github.ref_name }}-macos.zip" MacTranscriber*
+          cd ..
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: MacTranscriber-${{ github.ref_name }}
-          path: |
-            dist/MacTranscriber*
-            MacTranscriber-*.dmg
+          path: MacTranscriber-*.zip
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/MacTranscriber*
-            MacTranscriber-*.dmg
+          files: MacTranscriber-*.zip
           draft: false
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
         env:
