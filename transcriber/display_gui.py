@@ -317,6 +317,8 @@ class SubtitleDisplayCoordinator:
         self._current_original = ""
         self._new_sentence_ids = []  # 新添加的句子ID列表（用于翻译）
         self._has_new_content = False  # 标记是否有新内容（用于 Overlay 空白启动）
+        self._current_realtime_text = ""  # 当前正在转录的实时文本
+        self._current_realtime_translation = ""  # 当前实时文本的翻译
 
         # 兼容性参数
         self.context_size = context_size
@@ -405,9 +407,49 @@ class SubtitleDisplayCoordinator:
         if not text:
             return
 
+        # 保存当前实时文本
+        self._current_realtime_text = text
+
         def do_update():
-            # 直接更新 Overlay 窗口的文本显示
-            self.overlay_window.update_realtime_text(text)
+            # 获取数据库中最近的 3 句已完成的句子
+            recent_completed = self.data_manager.get_recent_sentences_after(
+                self._session_start_time, count=3
+            )
+
+            # 显示：数据库的 n-1 句 + 当前实时文本 + 实时翻译
+            self.overlay_window.update_with_realtime(
+                recent_completed,
+                text,
+                self._current_realtime_translation
+            )
+
+        # 调度到主线程
+        self.main_window.root.after(0, do_update)
+
+    def update_realtime_translation(self, translation: str):
+        """更新实时文本的翻译（仅 Overlay 显示，不存数据库）
+
+        Args:
+            translation: 实时文本的翻译
+        """
+        if not translation:
+            return
+
+        # 保存实时翻译
+        self._current_realtime_translation = translation
+
+        def do_update():
+            # 获取数据库中最近的 3 句已完成的句子
+            recent_completed = self.data_manager.get_recent_sentences_after(
+                self._session_start_time, count=3
+            )
+
+            # 更新 Overlay：显示实时翻译
+            self.overlay_window.update_with_realtime(
+                recent_completed,
+                self._current_realtime_text,
+                translation
+            )
 
         # 调度到主线程
         self.main_window.root.after(0, do_update)
@@ -486,6 +528,10 @@ class SubtitleDisplayCoordinator:
         # 保存新句子ID，供翻译使用
         self._new_sentence_ids = new_sentence_ids
 
+        # 清空实时文本（因为句子已完成）
+        # 注：不清空实时翻译，保留到完整句子的翻译完成后再清除，避免闪烁
+        self._current_realtime_text = ""
+
         # 刷新两个窗口
         self._refresh_both_windows()
 
@@ -530,6 +576,9 @@ class SubtitleDisplayCoordinator:
                 translation=translation
             )
 
+        # 清空实时翻译（完整句子的翻译已完成，避免闪烁）
+        self._current_realtime_translation = ""
+
         # 批量更新后刷新窗口
         self._refresh_both_windows()
 
@@ -545,13 +594,18 @@ class SubtitleDisplayCoordinator:
     def _refresh_both_windows(self):
         """刷新两个窗口的显示"""
         def do_refresh():
-            # Overlay 窗口：只显示当前会话的新内容（不包括历史）
-            if self._has_new_content:
-                # 只获取当前会话开始后的句子
+            # Overlay 窗口：显示最近 3 句已完成的句子 + 当前实时文本 + 实时翻译
+            if self._has_new_content or self._current_realtime_text:
+                # 获取最近 3 句已完成的句子
                 recent_sentences = self.data_manager.get_recent_sentences_after(
-                    self._session_start_time, count=4
+                    self._session_start_time, count=3
                 )
-                self.overlay_window.update_display(recent_sentences)
+                # 显示：n-1 句 + 实时文本 + 实时翻译
+                self.overlay_window.update_with_realtime(
+                    recent_sentences,
+                    self._current_realtime_text,
+                    self._current_realtime_translation
+                )
             else:
                 # 启动时显示空白
                 self.overlay_window.update_display([])

@@ -151,11 +151,65 @@ class OverlayWindow:
 
         self.window.geometry(f"{new_width}x{new_height}")
 
+    def update_with_realtime(self, completed_sentences: list[SentenceRecord], realtime_text: str, realtime_translation: str = ""):
+        """更新显示：已完成的句子 + 实时文本 + 实时翻译
+
+        Args:
+            completed_sentences: 已完成的句子列表（最多 3 句）
+            realtime_text: 当前正在转录的实时文本
+            realtime_translation: 实时文本的翻译（可选）
+        """
+        # 检查窗口是否仍然存在
+        try:
+            if not self.window.winfo_exists():
+                return
+        except Exception:
+            return
+
+        self.text_widget.configure(state="normal")
+        self.text_widget.delete("1.0", "end")
+
+        # 如果既没有完成的句子也没有实时文本，显示等待提示
+        if not completed_sentences and not realtime_text:
+            self.text_widget.insert("end", "等待语音输入...", "loading")
+        else:
+            # 合并已完成句子的原文
+            completed_originals = [s.original for s in completed_sentences]
+
+            # 添加实时文本到原文列表
+            all_originals = completed_originals.copy()
+            if realtime_text and realtime_text.strip():
+                all_originals.append(realtime_text)
+
+            # 显示原文段落（已完成 + 实时）
+            if all_originals:
+                original_paragraph = " ".join(all_originals)
+                self.text_widget.insert("end", original_paragraph, "original")
+                self.text_widget.insert("end", "\n\n")
+
+            # 显示翻译段落（已完成句子的翻译 + 实时翻译）
+            translations = []
+            for sentence in completed_sentences:
+                if sentence.translation and sentence.translation.strip():
+                    translations.append(sentence.translation)
+
+            # 添加实时翻译
+            if realtime_translation and realtime_translation.strip():
+                translations.append(realtime_translation)
+
+            if translations:
+                translation_paragraph = " ".join(translations)
+                self.text_widget.insert("end", translation_paragraph, "translation")
+
+        self.text_widget.configure(state="disabled")
+
+        # 自动滚动到底部
+        self.text_widget.see("end")
+
     def update_realtime_text(self, text: str):
         """更新实时文本（用于显示正在转录的内容，不访问数据库）
 
-        Args:
-            text: 实时文本
+        已废弃：请使用 update_with_realtime() 方法
         """
         # 检查窗口是否仍然存在
         try:
