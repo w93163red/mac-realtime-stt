@@ -1,15 +1,16 @@
 # Mac 实时字幕 + 翻译
 
-使用 BlackHole + faster-whisper + DeepSeek 实现的实时字幕和翻译工具。
+使用 BlackHole + RealtimeSTT + DeepSeek 实现的实时字幕和翻译工具。
 
 ## 特性
 
-- 🎤 实时音频捕获
-- 📝 离线语音识别（faster-whisper）
-- 🌍 实时翻译（DeepSeek API）
-- 🖥️ GUI 界面（Tkinter）- 滚动字幕历史
-- 💬 每句话独立显示，翻译异步追加
-- ⚡ 滑动窗口 + VAD 智能分段，低延迟
+- 🎤 实时音频捕获（BlackHole 虚拟音频设备）
+- 📝 离线语音识别（RealtimeSTT + faster-whisper）
+- 🔊 双层 VAD 语音检测（WebRTCVAD + SileroVAD）
+- 🌍 段落式实时翻译（DeepSeek API）
+- 🖥️ GUI 界面（Tkinter）- 段落模式显示
+- 💬 智能句子管理（最多保留6句话）
+- ⚡ 低延迟实时转录和翻译
 
 ## 安装
 
@@ -18,83 +19,133 @@
 brew install blackhole-2ch
 ```
 
-2. 在 Audio MIDI Setup 中创建 Multi-Output Device
+2. 在 Audio MIDI Setup 中创建 Multi-Output Device，包含：
+   - 内置扬声器（用于播放）
+   - BlackHole 2ch（用于捕获系统音频）
 
-3. 安装 Python 依赖：
+3. 设置环境变量：
+```bash
+export DEEPSEEK_API="your-deepseek-api-key"
+```
+
+4. 安装 Python 依赖：
 ```bash
 uv pip install -r requirements.txt
 ```
 
 ## 使用
 
-**GUI 模式（默认，推荐）：**
 ```bash
 python run.py
 ```
 
-**TUI 模式：**
-```bash
-python run.py --tui
-```
-
 ## 界面说明
 
-### GUI 模式
-- 类似聊天窗口的滚动界面
-- 每个句子独立显示为一个卡片
-- 原文立即显示（蓝色 🎤）
-- 翻译异步追加（绿色 🌍）
-- 支持鼠标滚轮查看历史记录
+**段落式 GUI 显示**：
+- **段落式显示**：所有句子合并成一个连续段落
+- **智能句子管理**：最多显示6句已完成的句子 + 1句正在说的句子
+- **原文区域**（蓝色 🎤）：显示所有句子组成的段落
+- **翻译区域**（绿色 🌍）：显示整个段落的翻译
+- **自动滚动**：新内容自动滚动到可见区域
+- **支持鼠标滚轮**：可以回看历史内容
 
-### TUI 模式
-- 终端内实时更新的字幕面板
-- 原文和翻译在同一位置刷新显示
+显示格式：
+```
+🎤 句子1 句子2 句子3 句子4 句子5 句子6 当前正在说的句子...
+
+🌍 完整的段落翻译内容...
+```
 
 ## 项目结构
 
 ```
 transcriber/
-├── __init__.py          # 包初始化
-├── config.py            # 配置定义（dataclass）
-├── audio.py             # 音频捕获（AudioCapture）
-├── transcription.py     # 语音转录（Transcriber）
-├── translation.py       # 文本翻译（Translator）
-├── display.py           # TUI 显示（SubtitleDisplay）
-├── display_gui.py       # GUI 显示（SubtitleGUIDisplay）
-├── processor.py         # 音频处理器（AudioProcessor）
-└── app.py              # 应用主类（TranscriberApp）
+├── __init__.py              # 包初始化
+├── config.py                # 配置定义（dataclass）
+├── translation.py           # 文本翻译（Translator）
+├── display_gui.py           # GUI 显示（SubtitleGUIDisplay）
+├── processor_realtimestt.py # RealtimeSTT 处理器
+└── app.py                   # 应用主类（TranscriberApp）
 
-run.py                   # 入口文件
+run.py                       # 入口文件
 ```
 
 ## 配置
 
-在 `transcriber/config.py` 中可以修改：
+### 环境变量
+```bash
+export DEEPSEEK_API="your-deepseek-api-key"
+```
 
-- 音频参数（采样率、设备名称等）
-- Whisper 模型（tiny/base/small/medium/large）
-- 翻译 API 设置
-- 处理参数（窗口大小、处理间隔等）
-- 显示刷新率
+### 配置文件
+
+在 [transcriber/config.py](transcriber/config.py) 中可以修改：
+
+- **AudioConfig**: 音频设备名称（默认：BlackHole 2ch）
+- **TranscriptionConfig**: Whisper 模型（tiny/base/small/medium/large）、设备（cpu/cuda）、计算类型
+- **TranslationConfig**: DeepSeek API 设置、源语言、目标语言、温度、最大令牌数
+- **ProcessingConfig**: 翻译延迟（未完成句子的翻译延迟，默认 0.5 秒）
+- **DisplayConfig**: 显示刷新率、最大可见句子数（默认 6）、翻译上下文大小
 
 ## 架构设计
 
 遵循单一职责原则，每个模块负责特定功能：
 
-- **AudioCapture**: 音频设备管理和数据捕获
-- **Transcriber**: Whisper 模型封装，负责语音转文字
+- **RealtimeSTTProcessor**: 基于 RealtimeSTT 的音频处理器
+  - 集成 AudioToTextRecorder（音频捕获 + VAD + 转录）
+  - 双层 VAD：WebRTCVAD（快速粗筛） + SileroVAD（精确检测）
+  - 实时转录回调（未完成句子）+ 完整句子返回
+  - 句子分割逻辑（按标点符号分割）
+  - 异步翻译队列管理
+
 - **Translator**: 翻译 API 封装
-- **SubtitleDisplay**: Rich TUI 显示管理（覆盖更新）
-- **SubtitleGUIDisplay**: Tkinter GUI 显示管理（滚动历史）
-- **AudioProcessor**: 协调音频处理流程（滑动窗口、VAD、异步翻译、句子分割）
-- **TranscriberApp**: 应用生命周期管理，支持 GUI/TUI 切换
+  - DeepSeek API 调用
+  - 支持上下文传递（段落模式不使用）
 
-### 句子分割逻辑
+- **SubtitleGUIDisplay**: Tkinter GUI 显示管理（段落模式）
+  - 维护句子列表（最多 6 句）
+  - 段落式显示（所有句子合并）
+  - 整段翻译显示
+  - 自动移除最旧句子
 
-- 检测句子结束标点（`.` `!` `?` `。` `！` `？`）
-- 完整句子立即输出为新条目
-- 未完成句子只在显著变化时更新
-- 避免重复输出相同内容
+- **TranscriberApp**: 应用生命周期管理（GUI 模式）
+
+### RealtimeSTT 特性
+
+- **VAD 配置**：
+  - `silero_sensitivity`: 0.3（VAD 灵敏度，0-1）
+  - `webrtc_sensitivity`: 3（WebRTC VAD 灵敏度，0-3）
+  - `post_speech_silence_duration`: 0.4 秒（句子结束后的静音时长）
+  - `min_length_of_recording`: 0.5 秒（最小录音长度）
+
+- **实时转录**：
+  - `enable_realtime_transcription`: True（启用实时转录）
+  - `realtime_processing_pause`: 0.1 秒（实时处理间隔）
+  - `on_realtime_transcription_update`: 实时更新回调（未完成句子）
+
+- **句子检测**：
+  - `recorder.text()`: 阻塞等待完整句子
+  - 自动句子分割：按 `.!?` 分割，处理缩写词
+
+### 句子管理逻辑
+
+1. **实时更新**（未完成句子）：
+   - 通过 `on_realtime_transcription_update` 回调接收
+   - 更新 GUI 的 `current_sentence`
+   - 延迟翻译（0.5 秒后触发）
+
+2. **完成句子**：
+   - 通过 `recorder.text()` 返回
+   - 按标点符号分割成多个句子
+   - 批量添加到句子列表
+   - 如果超过 6 句，移除最旧的句子
+   - 立即翻译整个段落
+
+3. **段落翻译**：
+   - 获取所有句子（包括未完成的）
+   - 合并成段落
+   - 翻译整个段落（不需要上下文）
+   - 更新 GUI 的 `paragraph_translation`
 
 ## License
 
